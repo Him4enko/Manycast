@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags: ["*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    name: Windows x64
+    # pinned: the preset asks for the "Visual Studio 17 2022" generator
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Cache OBS sources and dependencies
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ runner.os }}-${{ hashFiles('buildspec.json') }}
+
+      - name: Configure
+        run: cmake --preset windows-x64
+
+      - name: Build
+        run: cmake --build --preset windows-x64 --config RelWithDebInfo
+
+      - name: Unit tests
+        run: ctest --test-dir build_x64 -C RelWithDebInfo --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          cmake --install build_x64 --config RelWithDebInfo --prefix package
+          Compress-Archive -Path package/manycast -DestinationPath manycast-windows-x64.zip
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME manycast-windows-x64.zip `
+            --title $env:GITHUB_REF_NAME `
+            --generate-notes

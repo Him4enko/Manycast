@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Windows x64
+    # pinned: the preset asks for the "Visual Studio 17 2022" generator
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: |
+          cmake --version
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationVersion
+
+      # OBS sources, the prebuilt OBS dependencies and Qt6 are downloaded and
+      # built by CMake into .deps, which is the slow part of the build.
+      - name: Cache OBS sources and dependencies
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ runner.os }}-${{ hashFiles('buildspec.json') }}
+
+      - name: Configure
+        run: cmake --preset windows-x64
+
+      - name: Build
+        run: cmake --build --preset windows-x64 --config RelWithDebInfo
+
+      - name: Unit tests
+        run: ctest --test-dir build_x64 -C RelWithDebInfo --output-on-failure
+
+      - name: Check the localizations
+        shell: pwsh
+        run: ./tests/check-locales.ps1
+
+      - name: Smoke test the built plugin
+        shell: pwsh
+        run: ./tests/smoke-plugin.ps1
+
+      - name: Package
+        shell: pwsh
+        run: |
+          cmake --install build_x64 --config RelWithDebInfo --prefix package
+          Compress-Archive -Path package/manycast -DestinationPath manycast-windows-x64.zip
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: manycast-windows-x64
+          path: manycast-windows-x64.zip
+          if-no-files-found: error
